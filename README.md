@@ -32,26 +32,34 @@ View your app in AI Studio: https://ai.studio/apps/drive/1wPCT5Ku6Jx1fouL5OvbVuH
 3. Run the app:
    `npm run dev`
 
-## VPS Deployment (Nginx)
+## VPS Deployment (Dokploy + Dockerfile)
 
-### Build and publish
+This repository includes a production Docker image setup for Dokploy:
 
-1. Build the app:
-   `npm run build`
-2. Upload `dist/` to your VPS (for example `/var/www/ratisa/dist`).
-   - Important: deploy with cleanup (`rsync --delete` or remove old files first) so stale asset hashes are not kept.
-3. Use the versioned Nginx config template:
-   `deploy/nginx/ratisa.conf`
-4. Reload Nginx:
-   `sudo nginx -t && sudo systemctl reload nginx`
+- `Dockerfile` (multi-stage build with `node:20-alpine` + `nginx:alpine`)
+- `deploy/nginx/ratisa.docker.conf` (SPA fallback + `/oparl/` reverse proxy)
 
-### Required Nginx behavior
+### Dokploy setup
 
-- `location /oparl/` must reverse proxy to:
-  `https://buergerinfo.stadt-koeln.de/oparl/`
-- `location /` must keep SPA fallback:
-  `try_files $uri /index.html`
-- `/oparl/` block must come before `/` block.
+1. Disable or remove your old `Static Site` app to avoid domain conflicts.
+2. Create a new Dokploy application from this repository.
+3. Select `Dockerfile` deployment.
+4. Set Dockerfile path to `/Dockerfile`.
+5. Set container/exposed port to `80`.
+6. Attach your domain to this new app.
+7. Keep SSL termination in Dokploy (no TLS config needed inside container).
+
+### Why this fixes the error
+
+The app fetches OParl data from same-origin `/oparl/*`.  
+If `/oparl/*` falls back to `index.html`, the frontend receives HTML instead of JSON and shows:
+`Ungültige API-Antwort: HTML statt JSON`.
+
+The container Nginx config fixes this by enforcing:
+
+- `location /oparl/` -> `https://buergerinfo.stadt-koeln.de/oparl/`
+- `location /` -> `try_files $uri /index.html`
+- `/oparl/` block is above `/`
 
 ### Smoke checks after deploy
 
@@ -69,6 +77,19 @@ Expected:
 - If browser shows `Unexpected token '<'`, your `/oparl/*` route is returning HTML instead of JSON.
 - If `/oparl/...` returns `404`, your reverse proxy block is missing or placed after SPA fallback.
 - If AI features should remain off in production, keep `VITE_ENABLE_AI=false` (or unset it; production default is disabled).
+
+### Rollback
+
+If deployment fails, remap the domain back to the previous app in Dokploy.
+
+## Manual VPS Deployment (Nginx)
+
+If you deploy without Docker/Dokploy, use:
+
+1. `npm run build`
+2. Upload `dist/` to your VPS (for example `/var/www/ratisa/dist`)
+3. Apply `deploy/nginx/ratisa.conf`
+4. `sudo nginx -t && sudo systemctl reload nginx`
 
 ## MCP Development
 
