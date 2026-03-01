@@ -23,6 +23,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1wPCT5Ku6Jx1fouL5OvbVuH
    - `VITE_ENABLE_AI=true` (optional, defaults to `true` in dev and `false` in production)
    - `VITE_OPARL_PROXY_PREFIX=/oparl` (optional, defaults to `/oparl`)
    - `VITE_OPARL_BODY_ID=stadtverwaltung_koeln` (optional, defaults to `stadtverwaltung_koeln`)
+   - `VITE_OPARL_REQUEST_TIMEOUT_MS=30000` (optional, defaults to `30000`; increase on slow VPS links)
    - `VITE_MCP_HTTP_ENDPOINT=/mcp-http` (optional, defaults to `/mcp-http`)
    - `MCP_API_KEY=...` (optional, only needed for HTTP MCP server protection)
    - `MCP_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000`

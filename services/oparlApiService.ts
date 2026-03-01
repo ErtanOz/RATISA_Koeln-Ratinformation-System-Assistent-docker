@@ -14,7 +14,22 @@ const CACHE_TTL = 10 * 60 * 1000; // 10 Minuten
 const REVALIDATE_TTL = 2 * 60 * 1000; // 2 Minuten
 
 const MAX_CACHE_SIZE = 200; // Limit number of cached items
-const REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_TRANSIENT_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 400;
+const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+    if (!value) return fallback;
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return parsed;
+}
+
+const REQUEST_TIMEOUT_MS = parsePositiveInt(
+    process.env.VITE_OPARL_REQUEST_TIMEOUT_MS,
+    DEFAULT_REQUEST_TIMEOUT_MS,
+);
 
 interface CacheEntry<T> {
   data: T;
@@ -116,6 +131,43 @@ export class ApiError extends Error {
     }
 }
 
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+        }
+
+        const timeoutId = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+
+        const onAbort = () => {
+            clearTimeout(timeoutId);
+            signal?.removeEventListener('abort', onAbort);
+            reject(new DOMException('Aborted', 'AbortError'));
+        };
+
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
+function mapHttpErrorStatusText(status: number, statusText: string): string {
+    if (status === 404) return 'Ressource nicht gefunden.';
+    if (status === 500) return 'Interner Serverfehler.';
+    if (status === 503) return 'Dienst nicht verfügbar.';
+    return statusText;
+}
+
+function isRetryableTransientError(error: unknown): boolean {
+    if (!(error instanceof ApiError)) return false;
+    if (RETRYABLE_STATUS_CODES.has(error.status)) return true;
+    if (error.status !== 0) return false;
+    const text = error.statusText.toLowerCase();
+    return text.includes('zeitüberschreitung') || text.includes('netzwerkfehler');
+}
+
 function createRequestSignal(signal?: AbortSignal) {
     const requestController = new AbortController();
     let timedOut = false;
@@ -202,11 +254,14 @@ export async function fetchFromApi<T>(url: string, signal?: AbortSignal): Promis
                 if (cached.lastModified) headers['If-Modified-Since'] = cached.lastModified;
               }
 
-              const requestContext = createRequestSignal(signal);
-              const response = await (async () => {
+              for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt++) {
+                  const requestContext = createRequestSignal(signal);
                   try {
-                      return await fetch(url, { headers, signal: requestContext.signal }).catch(err => {
-                          if (err.name === 'AbortError') {
+                      let response: Response;
+                      try {
+                          response = await fetch(url, { headers, signal: requestContext.signal });
+                      } catch (err: any) {
+                          if (err?.name === 'AbortError') {
                               if (signal?.aborted) {
                                   throw err;
                               }
@@ -216,56 +271,66 @@ export async function fetchFromApi<T>(url: string, signal?: AbortSignal): Promis
                               throw err;
                           }
                           throw new ApiError(0, 'Netzwerkfehler: Bitte überprüfen Sie Ihre Internetverbindung.');
-                      });
+                      }
+
+                      if (response.status === 304 && cached) {
+                          cached.fetchedAt = Date.now();
+                          cached.expiry = Date.now() + CACHE_TTL;
+                          cache.delete(url);
+                          cache.set(url, cached);
+                          return cached.data;
+                      }
+
+                      if (!response.ok) {
+                          throw new ApiError(
+                              response.status,
+                              mapHttpErrorStatusText(response.status, response.statusText),
+                          );
+                      }
+
+                      const data = await parseApiJson<T>(response);
+                      
+                      const entry: CacheEntry<T> = {
+                          data,
+                          fetchedAt: Date.now(),
+                          expiry: Date.now() + CACHE_TTL,
+                          etag: response.headers.get('ETag') || undefined,
+                          lastModified: response.headers.get('Last-Modified') || undefined
+                      };
+
+                      pruneCache();
+                      cache.set(url, entry);
+
+                      if (isPagedResponse(data)) {
+                          data.data.forEach((item) => {
+                              if (isOparlObject(item)) {
+                                  cache.set(item.id, {
+                                      data: item,
+                                      fetchedAt: Date.now(),
+                                      expiry: Date.now() + CACHE_TTL
+                                  });
+                              }
+                          });
+                      }
+
+                      return data;
+                  } catch (error) {
+                      if (error instanceof DOMException && error.name === 'AbortError') {
+                          throw error;
+                      }
+
+                      const canRetry =
+                          attempt < MAX_TRANSIENT_RETRIES && isRetryableTransientError(error);
+                      if (!canRetry) {
+                          throw error;
+                      }
+                      await delay(RETRY_BASE_DELAY_MS * (attempt + 1), signal);
                   } finally {
                       requestContext.cleanup();
                   }
-              })();
-              
-              if (response.status === 304 && cached) {
-                  cached.fetchedAt = Date.now();
-                  cached.expiry = Date.now() + CACHE_TTL;
-                  cache.delete(url);
-                  cache.set(url, cached);
-                  return cached.data;
               }
 
-              if (!response.ok) {
-                  // Map HTTP status codes to user friendly messages where possible
-                  let msg = response.statusText;
-                  if (response.status === 404) msg = 'Ressource nicht gefunden.';
-                  if (response.status === 500) msg = 'Interner Serverfehler.';
-                  if (response.status === 503) msg = 'Dienst nicht verfügbar.';
-                  
-                  throw new ApiError(response.status, msg);
-              }
-
-              const data = await parseApiJson<T>(response);
-              
-              const entry: CacheEntry<T> = {
-                  data,
-                  fetchedAt: Date.now(),
-                  expiry: Date.now() + CACHE_TTL,
-                  etag: response.headers.get('ETag') || undefined,
-                  lastModified: response.headers.get('Last-Modified') || undefined
-              };
-
-              pruneCache();
-              cache.set(url, entry);
-
-              if (isPagedResponse(data)) {
-                  data.data.forEach((item) => {
-                      if (isOparlObject(item)) {
-                          cache.set(item.id, {
-                              data: item,
-                              fetchedAt: Date.now(),
-                              expiry: Date.now() + CACHE_TTL
-                          });
-                      }
-                  });
-              }
-
-              return data;
+              throw new ApiError(0, 'Unbekannter Fehler beim Laden der API-Antwort.');
           } catch (error) {
              throw error; 
           } finally {
@@ -315,9 +380,31 @@ export async function getList<T>(resource: string, params: URLSearchParams = new
  * The API ignores filter params (q, minDate, etc.), so we always fetch all and filter locally.
  */
 export async function getListAll<T>(resource: string, signal?: AbortSignal, limit = 200): Promise<T[]> {
-    const url = `${BASE_URL}/${resource}?limit=${limit}`;
-    const result = await fetchFromApi<PagedResponse<T>>(url, signal);
-    return result.data;
+    const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+    const candidateLimits = [normalizedLimit, 150, 100]
+        .filter((value, index, list) => value > 0 && list.indexOf(value) === index)
+        .filter((value) => value <= normalizedLimit);
+
+    let lastError: unknown = new ApiError(0, 'Unbekannter Fehler beim Laden der API-Antwort.');
+    for (const candidate of candidateLimits) {
+        try {
+            const url = `${BASE_URL}/${resource}?limit=${candidate}`;
+            const result = await fetchFromApi<PagedResponse<T>>(url, signal);
+            if (candidate !== normalizedLimit) {
+                console.warn(
+                    `OParl fallback active for "${resource}": using limit=${candidate} after transient errors at limit=${normalizedLimit}.`,
+                );
+            }
+            return result.data;
+        } catch (error) {
+            lastError = error;
+            if (!isRetryableTransientError(error)) {
+                throw error;
+            }
+        }
+    }
+
+    throw lastError;
 }
 
 export async function getItem<T>(url: string, signal?: AbortSignal): Promise<T> {

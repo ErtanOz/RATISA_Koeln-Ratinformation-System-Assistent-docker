@@ -140,24 +140,27 @@ describe('fetchFromApi', () => {
   it('returns a timeout ApiError when the request never resolves', async () => {
     vi.useFakeTimers();
 
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('Aborted', 'AbortError')),
+          { once: true },
+        );
+      });
+    });
+
     vi.stubGlobal(
       'fetch',
-      vi.fn((_url: string, init?: RequestInit) => {
-        return new Promise((_resolve, reject) => {
-          const signal = init?.signal;
-          signal?.addEventListener(
-            'abort',
-            () => reject(new DOMException('Aborted', 'AbortError')),
-            { once: true },
-          );
-        });
-      }),
+      fetchMock,
     );
 
     const request = fetchFromApi('/very-slow-resource');
     const capturedError = request.catch((error) => error);
 
-    await vi.advanceTimersByTimeAsync(15_001);
+    // 30s timeout * 3 attempts + retry delays (0.4s + 0.8s)
+    await vi.advanceTimersByTimeAsync(95_000);
 
     const error = await capturedError;
     expect(error).toEqual(
@@ -167,5 +170,6 @@ describe('fetchFromApi', () => {
         statusText: expect.stringContaining('Zeitüberschreitung'),
       }),
     );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
