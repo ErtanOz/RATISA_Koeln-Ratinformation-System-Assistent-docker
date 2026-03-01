@@ -1,0 +1,22 @@
+{
+  "name": "oparl-koeln-mcp-netlify",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "build/dev-http.js",
+  "scripts": {
+    "build": "tsc",
+    "dev:http": "tsx src/dev-http.ts",
+    "start:http": "node build/dev-http.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "serverless-http": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.14.0",
+    "tsx": "^4.16.5",
+    "typescript": "^5.8.2"
+  }
+}

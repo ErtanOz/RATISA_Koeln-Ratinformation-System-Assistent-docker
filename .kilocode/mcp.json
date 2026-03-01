@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "oparl-koeln": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\Ertan\\Documents\\Projekte\\ratisa---köln-ratinformation-system-assistent\\mcp-server\\build\\index.js"
+      ]
+    }
+  }
+}

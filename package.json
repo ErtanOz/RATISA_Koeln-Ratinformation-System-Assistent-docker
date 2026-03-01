@@ -1,0 +1,40 @@
+{
+  "name": "ratisa---köln-ratinformation-system-assistent",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "mcp:http:dev": "npm --prefix mcp-server-netlify run dev:http",
+    "mcp:smoke:stdio": "npm --prefix mcp-server run build && node tests/mcp/smoke-stdio.mjs",
+    "mcp:smoke:http": "npm --prefix mcp-server-netlify run build && node tests/mcp/smoke-http.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@openrouter/sdk": "^0.4.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router-dom": "^7.13.1",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "@vitest/coverage-v8": "^4.0.0",
+    "dotenv": "^17.2.3",
+    "jsdom": "^27.2.0",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0",
+    "vitest": "^4.0.0"
+  }
+}

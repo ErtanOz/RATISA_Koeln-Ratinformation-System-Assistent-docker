@@ -1,0 +1,1 @@
+{ "mcpServers": { "ratsinfo-koeln": { "command": "node", "args": ["/PFAD/ZU/DIESEM/PROJEKT/mcp-server/build/index.js"] } } }
